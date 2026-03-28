@@ -1,0 +1,8 @@
+arxiv_feeds:
+  - "https://rss.arxiv.org/rss/cs.CL"
+  - "https://rss.arxiv.org/rss/cs.LG"
+  - "https://rss.arxiv.org/rss/cs.AI"
+
+hf_pages:
+  - "https://huggingface.co/papers"
+  - "https://huggingface.co/papers/trending"

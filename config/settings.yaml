@@ -1,0 +1,10 @@
+lookback_days: 7
+must_contain_any_keyword: false
+push_threshold_must_read: 8
+push_threshold_quick_scan: 5
+max_items_in_report: 15
+timezone: "America/Los_Angeles"
+output_language: "zh-CN"
+request_timeout: 20
+request_retries: 2
+fuzzy_match_threshold: 0.9

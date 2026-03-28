@@ -1,0 +1,23 @@
+high_priority:
+  - "residual connection"
+  - "attention residual"
+  - "linear attention"
+  - "transformer architecture"
+  - "training dynamics"
+  - "scaling law"
+  - "state space model"
+  - "mixture of experts"
+
+medium_priority:
+  - "routing"
+  - "memory"
+  - "prenorm"
+  - "postnorm"
+  - "hidden-state growth"
+  - "depth"
+  - "long context"
+  - "efficient attention"
+
+negative_keywords:
+  - "survey"
+  - "benchmark only"

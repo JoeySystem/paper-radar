@@ -1,0 +1,17 @@
+priority_orgs:
+  - "Moonshot AI"
+  - "Anthropic"
+  - "Google DeepMind"
+  - "Meta AI"
+  - "Mistral AI"
+  - "OpenAI"
+
+priority_authors:
+  - ""
+
+priority_topics:
+  - "LLM architecture"
+  - "residual connection"
+  - "linear attention"
+  - "training dynamics"
+  - "scaling law"
