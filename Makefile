@@ -1,10 +1,13 @@
-.PHONY: install dev test run dry-run clean
+.PHONY: install dev test run dry-run clean setup docker-build docker-run
 
 install:
 	python3 -m pip install -e .
 
 dev:
 	python3 -m pip install -e .[dev]
+
+setup:
+	bash bootstrap.sh
 
 test:
 	python3 -m pytest
@@ -21,3 +24,9 @@ clean:
 	rm -f data/processed/*.json
 	rm -f output/*.md
 	rm -f logs/*.log
+
+docker-build:
+	docker build -t paper-radar .
+
+docker-run:
+	docker run --rm -v $(PWD)/output:/app/output -v $(PWD)/data:/app/data paper-radar

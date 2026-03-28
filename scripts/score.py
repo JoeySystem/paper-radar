@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -91,7 +92,7 @@ def _relevance_and_penalty(
     paper: dict[str, Any],
     keywords_cfg: dict[str, list[str]],
     settings: dict[str, Any],
-) -> tuple[float, float, list[str]]:
+) -> tuple[float, float, int, list[str]]:
     title = paper.get("title", "")
     summary = paper.get("summary", "")
     reasons: list[str] = []
@@ -125,7 +126,7 @@ def _relevance_and_penalty(
     if total_positive_hits == 0:
         penalty += 3.0
         reasons.append("与关注方向弱相关")
-    return relevance, penalty, reasons
+    return relevance, penalty, total_positive_hits, reasons
 
 
 def score_paper(
@@ -140,7 +141,7 @@ def score_paper(
     reasons: list[str] = []
 
     breakdown.freshness_score = _freshness_score(paper.get("published_at"), settings["timezone"], now)
-    relevance, penalty, relevance_reasons = _relevance_and_penalty(paper, keywords_cfg, settings)
+    relevance, penalty, positive_hits, relevance_reasons = _relevance_and_penalty(paper, keywords_cfg, settings)
     breakdown.relevance_score = relevance
     breakdown.penalty_score = penalty
     reasons.extend(relevance_reasons)
@@ -150,10 +151,18 @@ def score_paper(
     reasons.extend(author_reasons)
 
     heat_score, heat_reasons = _heat_score(paper)
+    if positive_hits == 0 and author_score == 0:
+        heat_score = min(heat_score, 2.0)
+        if heat_reasons:
+            reasons.append("热度存在，但主题相关性不足")
     breakdown.heat_score = heat_score
     reasons.extend(heat_reasons)
 
     paper["score"] = round(breakdown.total, 2)
+    paper["positive_keyword_hits"] = positive_hits
+    paper["is_report_eligible"] = bool(
+        positive_hits > 0 or author_score > 0 or not settings.get("require_topic_or_priority_for_report", True)
+    )
     paper["score_breakdown"] = {
         "freshness_score": breakdown.freshness_score,
         "relevance_score": breakdown.relevance_score,
@@ -163,12 +172,97 @@ def score_paper(
     }
     paper["tags"] = infer_tags(paper.get("title", ""), paper.get("summary", ""), keywords_cfg)
     paper["recommendation_reasons"] = list(dict.fromkeys(reasons))
-    paper["one_line_summary"] = _build_one_line_summary(paper)
+    paper["one_line_summary"] = _build_bilingual_summary(paper)
     return paper
 
 
-def _build_one_line_summary(paper: dict[str, Any]) -> str:
-    tags = paper.get("tags", [])
+def _split_sentences(text: str) -> list[str]:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not compact:
+        return []
+    parts = re.split(r"(?<=[.!?])\s+", compact)
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _trim_sentence(text: str, max_length: int = 180) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= max_length:
+        return text
+    clipped = text[: max_length - 1].rstrip(" ,;:")
+    return clipped + "…"
+
+
+def _classify_contribution(title: str, summary: str) -> tuple[str, str]:
+    haystack = f"{title} {summary}".lower()
+    patterns = [
+        (["we propose", "we present", "introduce", "propose"], ("提出", "proposes")),
+        (["we study", "study", "investigate", "analyze", "analysis"], ("分析", "analyzes")),
+        (["benchmark", "evaluate", "evaluation", "compare"], ("评估", "evaluates")),
+        (["framework", "system", "approach", "method"], ("方法", "presents")),
+        (["training", "optimization", "scaling"], ("训练", "studies")),
+    ]
+    for needles, labels in patterns:
+        if any(needle in haystack for needle in needles):
+            return labels
+    return ("研究", "studies")
+
+
+def _extract_focus_phrase(title: str, tags: list[str]) -> str:
     if tags:
-        return f"关注点包括 {', '.join(tags[:3])}，建议优先查看摘要与方法设定。"
-    return "主题与当前监控方向存在一定相关性，建议先快速扫摘要。"
+        return ", ".join(tags[:3])
+    normalized = re.sub(r"[:\-].*$", "", title).strip()
+    return normalized[:80] if normalized else "该工作"
+
+
+def _build_zh_summary(title: str, summary: str, tags: list[str]) -> str:
+    first_sentence = _split_sentences(summary)[:1]
+    action_zh, _action_en = _classify_contribution(title, summary)
+    focus = _extract_focus_phrase(title, tags)
+    if first_sentence:
+        sentence = first_sentence[0]
+        sentence = re.sub(
+            r"^(This paper|This work|We|In this paper)\s+(propose|present|introduce|study|analyze|investigate)?\s*",
+            "",
+            sentence,
+            flags=re.IGNORECASE,
+        )
+        sentence = sentence.rstrip(".")
+        return _trim_sentence(f"该文{action_zh}{focus}，核心内容是 {sentence}。")
+    return _trim_sentence(f"该文{action_zh}{focus}，建议优先查看摘要与方法设定。")
+
+
+def _build_en_summary(title: str, summary: str, tags: list[str]) -> str:
+    first_sentence = _split_sentences(summary)[:1]
+    _action_zh, action_en = _classify_contribution(title, summary)
+    focus = _extract_focus_phrase(title, tags)
+    if first_sentence:
+        sentence = first_sentence[0].rstrip(".")
+        sentence = re.sub(
+            r"^(This paper|This work|We|In this paper)\s+(propose|present|introduce|study|analyze|investigate)?\s*",
+            "",
+            sentence,
+            flags=re.IGNORECASE,
+        )
+        return _trim_sentence(f"The paper {action_en} {focus} and centers on {sentence}.")
+    return _trim_sentence(f"The paper {action_en} {focus}; start with the abstract and method section.")
+
+
+def _build_bilingual_summary(paper: dict[str, Any]) -> dict[str, str]:
+    title = paper.get("title", "")
+    summary = paper.get("summary", "")
+    tags = paper.get("tags", [])
+    if summary:
+        return {
+            "zh-CN": _build_zh_summary(title, summary, tags),
+            "en-US": _build_en_summary(title, summary, tags),
+        }
+    if tags:
+        tag_text = ", ".join(tags[:3])
+        return {
+            "zh-CN": f"该文围绕 {tag_text} 展开，建议先查看摘要与方法部分。",
+            "en-US": f"The paper focuses on {tag_text}; start with the abstract and method section.",
+        }
+    return {
+        "zh-CN": "该文与当前监控方向存在一定相关性，建议先快速扫摘要。",
+        "en-US": "The paper shows some overlap with the tracked themes; start with a quick abstract scan.",
+    }
