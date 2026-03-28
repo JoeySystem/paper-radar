@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +16,7 @@ try:
     from .render_md import render_report
     from .score import score_paper
     from .storage import StorageBackend
-    from .utils import configure_logging, load_yaml, project_root
+    from .utils import configure_logging, load_yaml, project_root, validate_config
 except ImportError:
     from fetch_arxiv import fetch_arxiv
     from fetch_hf import fetch_hf
@@ -24,7 +24,7 @@ except ImportError:
     from render_md import render_report
     from score import score_paper
     from storage import StorageBackend
-    from utils import configure_logging, load_yaml, project_root
+    from utils import configure_logging, load_yaml, project_root, validate_config
 
 
 LOGGER = logging.getLogger("paper_radar.main")
@@ -51,6 +51,25 @@ def load_config(root: Path) -> dict[str, Any]:
     }
 
 
+def print_run_summary(
+    output_path: Path,
+    arxiv_count: int,
+    hf_count: int,
+    scored_count: int,
+    dry_run: bool,
+) -> None:
+    """Print a short, user-friendly run summary."""
+    mode = "dry-run" if dry_run else "full run"
+    print("")
+    print("paper-radar run summary")
+    print(f"- Mode: {mode}")
+    print(f"- arXiv papers fetched: {arxiv_count}")
+    print(f"- Hugging Face paper hints fetched: {hf_count}")
+    print(f"- Papers scored: {scored_count}")
+    print(f"- Report written to: {output_path}")
+    print("- Next step: open the Markdown report in Obsidian or your editor.")
+
+
 def dedupe_papers(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Drop duplicate arXiv papers, keeping the highest score candidate later in the pipeline."""
     deduped: dict[str, dict[str, Any]] = {}
@@ -70,6 +89,17 @@ def run(args: argparse.Namespace) -> int:
     except Exception as exc:
         LOGGER.error("failed to load config: %s", exc)
         return 1
+    config_errors = validate_config(config)
+    if config_errors:
+        LOGGER.error("configuration validation failed")
+        for error in config_errors:
+            LOGGER.error("%s", error)
+        print("")
+        print("paper-radar configuration errors")
+        for error in config_errors:
+            print(f"- {error}")
+        print("- Fix the files above, then rerun `paper-radar --dry-run`.")
+        return 1
 
     settings = config["settings"]
     if args.lookback_days is not None:
@@ -78,7 +108,7 @@ def run(args: argparse.Namespace) -> int:
         settings["fuzzy_match_threshold"] = args.fuzzy_threshold
 
     output_path = Path(args.output_path) if args.output_path else root / "output" / "papers_today.md"
-    started_at = datetime.utcnow()
+    started_at = datetime.now(UTC)
     source_status = {"arxiv_ok": False, "hf_ok": False}
 
     arxiv_papers = fetch_arxiv(
@@ -87,6 +117,7 @@ def run(args: argparse.Namespace) -> int:
         timezone=settings["timezone"],
         timeout=settings.get("request_timeout", 20),
         retries=settings.get("request_retries", 2),
+        api_max_results=settings.get("arxiv_api_max_results", 200),
     )
     source_status["arxiv_ok"] = bool(arxiv_papers)
 
@@ -139,6 +170,13 @@ def run(args: argparse.Namespace) -> int:
         len(hf_papers),
         len(scored),
         output_path,
+    )
+    print_run_summary(
+        output_path=output_path,
+        arxiv_count=len(arxiv_papers),
+        hf_count=len(hf_papers),
+        scored_count=len(scored),
+        dry_run=args.dry_run,
     )
     return 0
 

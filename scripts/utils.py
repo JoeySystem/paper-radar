@@ -45,6 +45,61 @@ def load_yaml(path: Path) -> dict[str, Any]:
         return yaml.safe_load(handle) or {}
 
 
+def validate_config(config: dict[str, Any]) -> list[str]:
+    """Validate loaded configuration and return a list of human-readable errors."""
+    errors: list[str] = []
+
+    keywords = config.get("keywords", {})
+    authors = config.get("authors", {})
+    sources = config.get("sources", {})
+    settings = config.get("settings", {})
+
+    for key in ("high_priority", "medium_priority", "negative_keywords"):
+        if not isinstance(keywords.get(key), list):
+            errors.append(f"config/keywords.yaml: `{key}` must be a list.")
+
+    for key in ("priority_orgs", "priority_authors"):
+        if not isinstance(authors.get(key), list):
+            errors.append(f"config/authors.yaml: `{key}` must be a list.")
+
+    if not isinstance(sources.get("arxiv_feeds"), list) or not sources.get("arxiv_feeds"):
+        errors.append("config/sources.yaml: `arxiv_feeds` must be a non-empty list.")
+    if not isinstance(sources.get("hf_pages"), list):
+        errors.append("config/sources.yaml: `hf_pages` must be a list.")
+
+    integer_keys = [
+        "lookback_days",
+        "push_threshold_must_read",
+        "push_threshold_quick_scan",
+        "max_items_in_report",
+        "min_items_in_report",
+        "request_timeout",
+        "request_retries",
+        "arxiv_api_max_results",
+    ]
+    for key in integer_keys:
+        if not isinstance(settings.get(key), int):
+            errors.append(f"config/settings.yaml: `{key}` must be an integer.")
+
+    if not isinstance(settings.get("fuzzy_match_threshold"), (int, float)):
+        errors.append("config/settings.yaml: `fuzzy_match_threshold` must be a number.")
+    if not isinstance(settings.get("timezone"), str) or not settings.get("timezone"):
+        errors.append("config/settings.yaml: `timezone` must be a non-empty string.")
+    if not isinstance(settings.get("require_topic_or_priority_for_report"), bool):
+        errors.append("config/settings.yaml: `require_topic_or_priority_for_report` must be a boolean.")
+
+    must_read = settings.get("push_threshold_must_read")
+    quick_scan = settings.get("push_threshold_quick_scan")
+    if isinstance(must_read, int) and isinstance(quick_scan, int) and quick_scan > must_read:
+        errors.append("config/settings.yaml: `push_threshold_quick_scan` must be <= `push_threshold_must_read`.")
+    min_items = settings.get("min_items_in_report")
+    max_items = settings.get("max_items_in_report")
+    if isinstance(min_items, int) and isinstance(max_items, int) and min_items > max_items:
+        errors.append("config/settings.yaml: `min_items_in_report` must be <= `max_items_in_report`.")
+
+    return errors
+
+
 def dump_json(path: Path, payload: Any) -> None:
     """Write JSON to disk."""
     ensure_directory(path.parent)
